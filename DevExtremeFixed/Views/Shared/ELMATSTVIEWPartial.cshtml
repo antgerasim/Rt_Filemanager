@@ -1,0 +1,1164 @@
+﻿@inherits RootViewItemControl<Trucks>
+@using EleWise.ELMA.ConfigurationModel
+@using EleWise.ELMA.Web.Mvc.Views.ViewItem
+@using EleWise.ELMA.Security
+@using EleWise.ELMA.API
+@using EleWise.ELMA.Security.Models
+@using EleWise.ELMA.Security.Services
+@using EleWise.ELMA.Model.Managers
+@using EleWise.ELMA.Model.Filters;
+@using Ovga.Core;
+@using Ovga.Ched.ServiceClient;
+@using System.Text;
+@using Newtonsoft.Json;
+@using System.Dynamic;
+@using Ovga.Tools;
+
+
+@{
+    var setting = EntityManager<ISetting>.Instance.Find(x => x.ParamName == "LoggingViewingVehicles").Single().Trigger;
+    string k = CommonSettings.Get<string>("ETPReceiveElkQueueName");
+    
+    if (setting.HasValue && setting.Value) {
+
+        var history = EntityManager<ISecurityLog>.Instance.Create ();
+        var curUser = PublicAPI.Services.Authentication.GetCurrentUser();
+        history.user = curUser.FullName;
+        history.ChangeDate = DateTime.Now;
+        history.TypeAction = new EleWise.ELMA.Model.Common.DropDownItem("Открытие полей");
+        history.Trucks = Model;
+        if(Model.Zayavlenie !=null)
+        {
+            history.recourse = Model.Zayavlenie;
+        }
+        history.Save();
+    }
+}
+
+@if (ViewItem != null)
+{
+    // Здесь выводятся дочерние элементы для панели
+    foreach (var viewItem in ViewItem.GetRenderItems())
+    {
+        @Html.ViewItem(viewItem)
+    } //end foreach
+}
+@if (Model.Zayavlenie != null && Model.Zayavlenie.StatusDecision != null && Model.Zayavlenie.StatusDecision.ToString () == "Черновик"){
+    @(Html.Toolbar("toolbar1").Group("toolbar-group-1")
+          .ToolbarLink("", "Принять", "#x32/aceptts.png", "/Processes/ProcessHeader/RunByWebQuery/a59938f9-debc-4940-ac9f-2449f593d417?Item_ID="+Model.Id.ToString(), "toolbar-action-Run1")
+          )
+
+    @(Html.Toolbar("toolbar2").Group("toolbar-group-2")
+          .ToolbarLink("", "Отказать", "#x32/cancelts.png", "/Processes/ProcessHeader/RunByWebQuery/8dc2bd91-ee24-47f6-8531-a91da53d47f6?Item_ID="+Model.Id.ToString(), "toolbar-action-Run2")
+          )
+}
+
+<style>
+
+    body.waiting * {
+        cursor: progress;
+    }
+
+    tr.active-row {
+        background: bisque !important;
+    }
+
+</style>
+<style>
+    body, html {
+        margin: 0px;
+        /* overflow: hidden; causes Elma scrollbug*/
+        height: 100%;
+    }
+
+    div#map {
+        width: 100%;
+        height: 100%;
+    }
+
+    div.control_pane {
+        position: absolute;
+        top: 15px;
+        right: 15px;
+        width: 150px;
+        background-color: rgba(255, 255, 255, 0.7);
+        z-index: 1;
+    }
+
+    div.control_pane input,
+    div.control_pane label {
+        display: inline-block;
+        margin-bottom: 0; /* I added this after I posted my reply */
+        vertical-align: middle; /* Fixes any weird issues in Firefox and IE */
+    }
+</style>        
+        
+<script src="https://gisoivapi.mos.ru/EverCloud/HTML5/everGis-bundle.js"></script>
+<script src="https://gisoiv.mos.ru/IntegrationGIS/HTML5/006/evergis.js"></script> 
+<script src="https://gisoivapi.mos.ru/EverCloud/HTML5/wktLoader.js"></script>
+        
+
+<script>
+    try {
+        var rgList = [];
+        var dateAnswerList = [];
+        var routeLayersStack = [];
+        var sp = {};
+        var wktTable = {};
+        var featureLayer = {};
+        var featureLayer2 = {};
+        var mapTips = []; //check below
+
+        $(document).ready(function() {
+        
+            @{
+                var newLogicaSetting = CommonSettings.Get<bool>("NewLogicaSetting");
+            } 
+
+            var newLogicaSetting = '@newLogicaSetting';
+            var isNewLogicaSetting = (newLogicaSetting == 'True');
+
+            if (!isNewLogicaSetting) {
+                //hide tabs
+                $('#Entity_TabLayout1 > ul > li').each(function(idx, obj) {
+
+                    var anchor = obj.getElementsByTagName('a')[0];
+                    console.log(anchor);
+                    //debugger;
+                    if (anchor) {
+                        var tabText = anchor.innerText.toLowerCase().replace(/[0-9]/g, '');
+                        if (tabText === 'маршруты' || tabText === 'бнсо') {
+
+                            $(anchor.parentElement).hide();
+                        }
+                    }
+                })
+            }
+
+            Old();
+
+            (function whenRenderedInFrame() {
+                if (window.location.href.indexOf('asiframe') !== -1) {
+                    debugger;
+
+                    //var operationSuccCell = $('#tdContent').find('td:contains("Операция выполнена успешно")')[0];
+                    var operationSuccCell = $('#tdContent').find('span:contains("Операция выполнена успешно")')[0];
+
+                    (function hideElements() {
+                        //hideNavigationBar();
+                        function hideNavigationBar() {
+                            var menuTopElem = document.querySelector('#tr_menu_top > td > table');
+                            menuTopElem.outerHTML = "";
+                            delete menuTopElem;
+
+                            var headerBarElem = document.querySelector('#headerBar');
+                            headerBarElem.outerHTML = "";
+                            delete headerBarElem;
+                        }
+                    })();
+
+                    drawPlanLabelsInFrame();
+
+                    //draw PlanLabels only when after backurl/ if isOperationSucceed
+                    var operationSuccCell = $('#tdContent > div > table').find('td:contains("Операция выполнена успешно")')[0];
+                    drawCalendars(true);
+
+                    var commentRow = document.querySelector('#Entity_TabLayout1-6 > div > div > table > tbody > tr > td > table > tbody > tr > ' + 'td:nth-child(1) > div > table > tbody > tr:nth-child(7)');
+
+                    drawCommentLabel(true, commentRow);
+                    drawOkButton(true);
+                    drawCommentTextArea(true, commentRow);
+                }
+
+            })();
+
+            function old() {
+
+                var toolbar = document.getElementById("tr_page_top");
+                toolbar.style.display = 'none';
+
+                var cnd = document.getElementById("Entity_Condition_ValueContainer");
+                if (cnd && cnd.innerText && cnd.innerText.trim() == 'Сведения получены') {
+
+
+                    var x = document.getElementById("Entity_DeptRegNumTS_ValueContainer");
+                    var x1 = x.getElementsByClassName("display-string");
+                    var y = document.getElementById("Entity_RegNumTS_ValueContainer");
+                    var y1 = y.getElementsByClassName("display-string");
+
+                    if (x1[0].innerHTML == y1[0].innerHTML) {
+                        x.style.backgroundColor = '#3CB371';
+                    } else {
+                        x.style.backgroundColor = '#FF6347';
+                    }
+
+                    var d = document.getElementById("Entity_DeptNameOfProprietor_ValueContainer");
+                    var d1 = d.getElementsByClassName("display-string");
+                    var n = document.getElementById("Entity_NameOfProprietor_ValueContainer");
+                    var n1 = n.getElementsByClassName("display-string");
+                    if (d1[0].innerHTML.toUpperCase() == n1[0].innerHTML.toUpperCase()) {
+
+                        d.style.backgroundColor = '#3CB371';
+                    } else {
+                        d.style.backgroundColor = '#FF6347';
+                    }
+                    var c = document.getElementById("Entity_DeptCarrying_ValueContainer");
+                    var ca = document.getElementById("Entity_Carrying_ValueContainer");
+                    var ca1 = ca.getElementsByClassName("display-string");
+                    if (c.innerText.replace(/[\s]/g, "") == ca1[0].innerHTML) {
+                        c.style.backgroundColor = '#3CB371';
+                    } else {
+                        c.style.backgroundColor = '#FF6347';
+                    }
+                    var un = document.getElementById("Entity_DeptUnladenMass_ValueContainer");
+                    var un1 = un.getElementsByClassName("display-string");
+                    var unl = document.getElementById("Entity_UnladenMass_ValueContainer");
+                    var unl1 = unl.getElementsByClassName("display-string");
+                    if (un1[0].innerHTML == unl1[0].innerHTML) {
+                        un.style.backgroundColor = '#3CB371';
+                    } else {
+                        un.style.backgroundColor = '#FF6347';
+                    }
+                    var al = document.getElementById("Entity_DeptAlowedMass_ValueContainer");
+                    var al1 = al.getElementsByClassName("display-string");
+                    var am = document.getElementById("Entity_AlowedMass_ValueContainer");
+                    var am1 = am.getElementsByClassName("display-string");
+                    if (al1[0].innerHTML == am1[0].innerHTML) {
+                        al.style.backgroundColor = '#3CB371';
+                    } else {
+                        al.style.backgroundColor = '#FF6347';
+                    }
+                    var dts = document.getElementById("Entity_DeptTipTS_ValueContainer");
+                    var dts1 = dts.getElementsByClassName("display-string");
+                    var tts = document.getElementById("Entity_TipTS_ValueContainer");
+                    var tts1 = tts.getElementsByClassName("display-string");
+                    if (tts1[0].innerHTML.toUpperCase() == dts1[0].innerHTML.toUpperCase()) {
+                        dts.style.backgroundColor = '#3CB371';
+                    } else {
+                        dts.style.backgroundColor = '#FF6347';
+                    }
+                    var dm = document.getElementById("Entity_DeptModelj_ValueContainer");
+                    var dm1 = dm.getElementsByClassName("display-string");
+                    var mj = document.getElementById("Entity_MarkaModel_ValueContainer");
+                    var mj1 = mj.getElementsByClassName("display-string");
+
+                    if (dm1[0].innerHTML.toUpperCase() == mj1[0].innerHTML.toUpperCase()) {
+                        dm.style.backgroundColor = '#3CB371';
+                    } else {
+                        dm.style.backgroundColor = '#FF6347';
+                    }
+                    var dy = document.getElementById("Entity_DeptYearTS_ValueContainer");
+                    var dy1 = dy.getElementsByClassName("display-string");
+                    var yt = document.getElementById("Entity_YearTS_ValueContainer");
+                    var yt1 = yt.getElementsByClassName("display-string");
+                    if (dy1[0].innerHTML == yt1[0].innerHTML) {
+                        dy.style.backgroundColor = '#3CB371';
+                    } else {
+                        dy.style.backgroundColor = '#FF6347';
+                    }
+                    var dc = document.getElementById("Entity_DeptCategory_ValueContainer");
+                    var dc1 = dc.getElementsByClassName("display-string");
+                    var c = document.getElementById("Entity_Category_ValueContainer");
+
+                    if (dc1[0].innerHTML.toUpperCase() == c.innerText.trim().toUpperCase()) {
+                        dc.style.backgroundColor = '#3CB371';
+                    } else {
+                        dc.style.backgroundColor = '#FF6347';
+                    }
+                    var dds = document.getElementById("Entity_DeptDatePTS_ValueContainer");
+                    var dis = document.getElementById("Entity_DateIssueSTS_ValueContainer");
+                    if (dds.innerText.trim() == dis.innerText.trim()) {
+                        dds.style.backgroundColor = '#3CB371';
+                    } else {
+                        dds.style.backgroundColor = '#FF6347';
+                    }
+                    var dns = document.getElementById("Entity_NumberSTS_ValueContainer");
+                    var dns1 = dns.getElementsByClassName("display-string");
+                    var ns = document.getElementById("Entity_DeptNumPTS_ValueContainer");
+                    var ns1 = ns.getElementsByClassName("display-string");
+
+                    if (dns1[0].innerHTML.toUpperCase() == ns1[0].innerHTML.toUpperCase()) {
+                        ns.style.backgroundColor = '#3CB371';
+                    } else {
+                        ns.style.backgroundColor = '#FF6347';
+                    }
+                    var deco = document.getElementById("Entity_DeptEcoKlass_ValueContainer");
+                    var deco1 = deco.getElementsByClassName("display-string");
+                    var eco = document.getElementById("Entity_EcoKlassTS_ValueContainer");
+                    if (deco1[0].innerHTML.toUpperCase() == eco.innerText.trim().toUpperCase()) {
+                        deco.style.backgroundColor = '#3CB371';
+                    } else {
+                        deco.style.backgroundColor = '#FF6347';
+                    }
+
+                    cnd.style.color = 'green';
+                } else if (cnd) {
+                    cnd.style.color = 'red';
+                }
+            };
+
+        }); //end ready
+
+
+        $(document).ajaxComplete(function() {
+
+            var selectedTab = $("#Entity_TabLayout1 > ul").find(".t-item.t-state-active");
+
+            var context = getContextFor(selectedTab);
+
+            //If active tab == route, draw map
+            if (selectedTab.index() === 8) {
+
+                var map = document.querySelector('#map');
+                if (map) {
+                    return;
+                }
+                wktTable = document.querySelector('#Grid_7aa44d53-4bf8-4287-a38d-73b9f1e3e6cf > div.t-grid-content > table');
+
+                (function createMapContainer() {
+                    $('#panel_Entity_028602c9_e02c_4ee3_9541_47cdd2643a18').attr('id', 'map').width(640).height(400).removeClass('panel-content');
+                })();
+                
+                @if(Model.RoutesGeometry !=null)
+                {
+
+                    foreach(var rg in Model.RoutesGeometry)
+                    {
+                        if(rg.IdWKT != null)
+                        {
+                            <text>rgList.push({
+                    id:'@(rg.IdWKT)',
+                    @if (rg.DateAnswer != null)
+                    {
+                        <text> dateAnswer: new Date(@(rg.DateAnswer.Value.Year), @(rg.DateAnswer.Value.Month - 1), @(rg.DateAnswer.Value.Day), @(rg.DateAnswer.Value.Hour), @(rg.DateAnswer.Value.Minute)),</text>
+                    }
+                    xml: '@(Html.Raw(Encoding.UTF8.GetString(Rched.Instance.GetDocument(rg.IdWKT)).Replace(Environment.NewLine, "").Trim()))'}); </text>
+                        }
+                    }
+
+                }
+
+
+                console.log('rgList', rgList);
+
+                var addressList = [];
+                
+                @{
+                    if (Model.Route != null && Model.Route.TochkiMarshruta != null) {
+
+                        foreach(var d in Model.Route.TochkiMarshruta)
+                        {
+
+                            if(d.Longitude !=null && d.Latitude !=null){
+                                //decimal decLong = Convert.ToDecimal(d.Longitude);
+                                //decimal deciLat = Convert.ToDecimal(d.Latitude);
+                                
+                                
+                                
+                                @:addressList.push({street:"@d.Street",house: "@d.Dom",type:"@d.TypePoint.TypeRoutePoint", long:@d.Longitude.Replace(',','.'), lat:@d.Latitude.Replace(',','.')});
+                            }else{
+                                @:addressList.push({street:"@d.Street",house: "@d.Dom",type:"@d.TypePoint.TypeRoutePoint"});
+                            }
+                        }
+                    }
+                }
+
+
+                if (addressList.length > 0) {
+                    setOnClickHandlers(wktTable);
+                    everGis(addressList, rgList);
+                }
+
+                function everGis() {
+
+                    var mapPinBlue =
+                        'data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyB3aWR0aD0iMTUuNzA5bW0iIGhlaWdodD0iMjYuMTk0bW0iIHZlcnNpb249IjEuMSIgdmlld0JveD0iMCAwIDE1LjcwOTAzOCAyNi4xOTM3NSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4bWxuczpjYz0iaHR0cDovL2NyZWF0aXZlY29tbW9ucy5vcmcvbnMjIiB4bWxuczpkYz0iaHR0cDovL3B1cmwub3JnL2RjL2VsZW1lbnRzLzEuMS8iIHhtbG5zOnJkZj0iaHR0cDovL3d3dy53My5vcmcvMTk5OS8wMi8yMi1yZGYtc3ludGF4LW5zIyI+CjxtZXRhZGF0YT4KPHJkZjpSREY+CjxjYzpXb3JrIHJkZjphYm91dD0iIj4KPGRjOmZvcm1hdD5pbWFnZS9zdmcreG1sPC9kYzpmb3JtYXQ+CjxkYzp0eXBlIHJkZjpyZXNvdXJjZT0iaHR0cDovL3B1cmwub3JnL2RjL2RjbWl0eXBlL1N0aWxsSW1hZ2UiLz4KPGRjOnRpdGxlLz4KPC9jYzpXb3JrPgo8L3JkZjpSREY+CjwvbWV0YWRhdGE+CjxnIHRyYW5zZm9ybT0idHJhbnNsYXRlKC05Ny44MDEgLTEzMS4zKSI+CjxnIHRyYW5zZm9ybT0ibWF0cml4KC4wMTQ0OTcgMCAwIC4wMTQ0OTcgOTAuMDQ5IDEyNy43MSkiPgo8dGl0bGU+TGF5ZXIgMTwvdGl0bGU+CjxwYXRoIGQ9Im0xMDc3LjkgMTk1OS42Yy0zOC43Ny0xOTAuMy0xMDcuMTItMzQ4LjY3LTE4OS45LTQ5NS40NC02MS40MDctMTA4Ljg3LTEzMi41NC0yMDkuMzYtMTk4LjM2LTMxNC45NC0yMS45NzItMzUuMjQtNDAuOTM0LTcyLjQ4LTYyLjA0Ny0xMDkuMDUtNDIuMjE2LTczLjE0LTc2LjQ0NC0xNTcuOTQtNzQuMjY5LTI2Ny45MyAyLjEyNS0xMDcuNDcgMzMuMjA4LTE5My42OCA3OC4wMy0yNjQuMTcgNzMuNzE5LTExNS45NCAxOTcuMi0yMTAuOTkgMzYyLjg4LTIzNS45NyAxMzUuNDctMjAuNDI0IDI2Mi40OCAxNC4wODIgMzUyLjU0IDY2Ljc0OCA3My42IDQzLjAzOCAxMzAuNiAxMDAuNTMgMTczLjkyIDE2OC4yOCA0NS4yMiA3MC43MTYgNzYuMzYgMTU0LjI2IDc4Ljk3IDI2My4yMyAxLjM0IDU1LjgzLTcuOCAxMDcuNTMtMjAuNjggMTUwLjQyLTEzLjAzIDQzLjQwOS0zMy45OSA3OS42OTgtNTIuNjQgMTE4LjQ2LTM2LjQxIDc1LjY2LTgyLjA1IDE0NC45OC0xMjcuODYgMjE0LjM0LTEzNi40NCAyMDYuNjEtMjY0LjUgNDE3LjMxLTMyMC41OCA3MDYuMDN6IiBjbGlwLXJ1bGU9ImV2ZW5vZGQiIGZpbGw9IiNmMDAiIGZpbGwtcnVsZT0iZXZlbm9kZCIgc3Ryb2tlPSIjMDAwIiBzdHJva2UtbWl0ZXJsaW1pdD0iMTAiIHN0cm9rZS13aWR0aD0iMzciLz4KPGNpcmNsZSBjeD0iMTA4MC42IiBjeT0iNzQwLjA1IiByPSIxODMuMzMiIGNsaXAtcnVsZT0iZXZlbm9kZCIgZmlsbC1ydWxlPSJldmVub2RkIi8+CjwvZz4KPC9nPgo8L3N2Zz4K';
+                    var mapPinGreen =
+                        'data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyB3aWR0aD0iMTUuNzA5bW0iIGhlaWdodD0iMjYuMTk0bW0iIHZlcnNpb249IjEuMSIgdmlld0JveD0iMCAwIDE1LjcwOTAzOCAyNi4xOTM3NSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4bWxuczpjYz0iaHR0cDovL2NyZWF0aXZlY29tbW9ucy5vcmcvbnMjIiB4bWxuczpkYz0iaHR0cDovL3B1cmwub3JnL2RjL2VsZW1lbnRzLzEuMS8iIHhtbG5zOnJkZj0iaHR0cDovL3d3dy53My5vcmcvMTk5OS8wMi8yMi1yZGYtc3ludGF4LW5zIyI+CjxtZXRhZGF0YT4KPHJkZjpSREY+CjxjYzpXb3JrIHJkZjphYm91dD0iIj4KPGRjOmZvcm1hdD5pbWFnZS9zdmcreG1sPC9kYzpmb3JtYXQ+CjxkYzp0eXBlIHJkZjpyZXNvdXJjZT0iaHR0cDovL3B1cmwub3JnL2RjL2RjbWl0eXBlL1N0aWxsSW1hZ2UiLz4KPGRjOnRpdGxlLz4KPC9jYzpXb3JrPgo8L3JkZjpSREY+CjwvbWV0YWRhdGE+CjxnIHRyYW5zZm9ybT0idHJhbnNsYXRlKC05Ny44MDEgLTEzMS4zKSI+CjxnIHRyYW5zZm9ybT0ibWF0cml4KC4wMTQ0OTcgMCAwIC4wMTQ0OTcgOTAuMDQ5IDEyNy43MSkiPgo8dGl0bGU+TGF5ZXIgMTwvdGl0bGU+CjxwYXRoIGQ9Im0xMDc3LjkgMTk1OS42Yy0zOC43Ny0xOTAuMy0xMDcuMTItMzQ4LjY3LTE4OS45LTQ5NS40NC02MS40MDctMTA4Ljg3LTEzMi41NC0yMDkuMzYtMTk4LjM2LTMxNC45NC0yMS45NzItMzUuMjQtNDAuOTM0LTcyLjQ4LTYyLjA0Ny0xMDkuMDUtNDIuMjE2LTczLjE0LTc2LjQ0NC0xNTcuOTQtNzQuMjY5LTI2Ny45MyAyLjEyNS0xMDcuNDcgMzMuMjA4LTE5My42OCA3OC4wMy0yNjQuMTcgNzMuNzE5LTExNS45NCAxOTcuMi0yMTAuOTkgMzYyLjg4LTIzNS45NyAxMzUuNDctMjAuNDI0IDI2Mi40OCAxNC4wODIgMzUyLjU0IDY2Ljc0OCA3My42IDQzLjAzOCAxMzAuNiAxMDAuNTMgMTczLjkyIDE2OC4yOCA0NS4yMiA3MC43MTYgNzYuMzYgMTU0LjI2IDc4Ljk3IDI2My4yMyAxLjM0IDU1LjgzLTcuOCAxMDcuNTMtMjAuNjggMTUwLjQyLTEzLjAzIDQzLjQwOS0zMy45OSA3OS42OTgtNTIuNjQgMTE4LjQ2LTM2LjQxIDc1LjY2LTgyLjA1IDE0NC45OC0xMjcuODYgMjE0LjM0LTEzNi40NCAyMDYuNjEtMjY0LjUgNDE3LjMxLTMyMC41OCA3MDYuMDN6IiBjbGlwLXJ1bGU9ImV2ZW5vZGQiIGZpbGw9IiMwMDgwMDAiIGZpbGwtcnVsZT0iZXZlbm9kZCIgc3Ryb2tlPSIjMDAwIiBzdHJva2UtbWl0ZXJsaW1pdD0iMTAiIHN0cm9rZS13aWR0aD0iMzciLz4KPGNpcmNsZSBjeD0iMTA4MC42IiBjeT0iNzQwLjA1IiByPSIxODMuMzMiIGNsaXAtcnVsZT0iZXZlbm9kZCIgZmlsbC1ydWxlPSJldmVub2RkIi8+CjwvZz4KPC9nPgo8L3N2Zz4K';
+                    var mapPinFuchsia =
+                        'data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyB3aWR0aD0iMTUuNzA5bW0iIGhlaWdodD0iMjYuMTk0bW0iIHZlcnNpb249IjEuMSIgdmlld0JveD0iMCAwIDE1LjcwOTAzOCAyNi4xOTM3NSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4bWxuczpjYz0iaHR0cDovL2NyZWF0aXZlY29tbW9ucy5vcmcvbnMjIiB4bWxuczpkYz0iaHR0cDovL3B1cmwub3JnL2RjL2VsZW1lbnRzLzEuMS8iIHhtbG5zOnJkZj0iaHR0cDovL3d3dy53My5vcmcvMTk5OS8wMi8yMi1yZGYtc3ludGF4LW5zIyI+CjxtZXRhZGF0YT4KPHJkZjpSREY+CjxjYzpXb3JrIHJkZjphYm91dD0iIj4KPGRjOmZvcm1hdD5pbWFnZS9zdmcreG1sPC9kYzpmb3JtYXQ+CjxkYzp0eXBlIHJkZjpyZXNvdXJjZT0iaHR0cDovL3B1cmwub3JnL2RjL2RjbWl0eXBlL1N0aWxsSW1hZ2UiLz4KPGRjOnRpdGxlLz4KPC9jYzpXb3JrPgo8L3JkZjpSREY+CjwvbWV0YWRhdGE+CjxnIHRyYW5zZm9ybT0idHJhbnNsYXRlKC05Ny44MDEgLTEzMS4zKSI+CjxnIHRyYW5zZm9ybT0ibWF0cml4KC4wMTQ0OTcgMCAwIC4wMTQ0OTcgOTAuMDQ5IDEyNy43MSkiPgo8dGl0bGU+TGF5ZXIgMTwvdGl0bGU+CjxwYXRoIGQ9Im0xMDc3LjkgMTk1OS42Yy0zOC43Ny0xOTAuMy0xMDcuMTItMzQ4LjY3LTE4OS45LTQ5NS40NC02MS40MDctMTA4Ljg3LTEzMi41NC0yMDkuMzYtMTk4LjM2LTMxNC45NC0yMS45NzItMzUuMjQtNDAuOTM0LTcyLjQ4LTYyLjA0Ny0xMDkuMDUtNDIuMjE2LTczLjE0LTc2LjQ0NC0xNTcuOTQtNzQuMjY5LTI2Ny45MyAyLjEyNS0xMDcuNDcgMzMuMjA4LTE5My42OCA3OC4wMy0yNjQuMTcgNzMuNzE5LTExNS45NCAxOTcuMi0yMTAuOTkgMzYyLjg4LTIzNS45NyAxMzUuNDctMjAuNDI0IDI2Mi40OCAxNC4wODIgMzUyLjU0IDY2Ljc0OCA3My42IDQzLjAzOCAxMzAuNiAxMDAuNTMgMTczLjkyIDE2OC4yOCA0NS4yMiA3MC43MTYgNzYuMzYgMTU0LjI2IDc4Ljk3IDI2My4yMyAxLjM0IDU1LjgzLTcuOCAxMDcuNTMtMjAuNjggMTUwLjQyLTEzLjAzIDQzLjQwOS0zMy45OSA3OS42OTgtNTIuNjQgMTE4LjQ2LTM2LjQxIDc1LjY2LTgyLjA1IDE0NC45OC0xMjcuODYgMjE0LjM0LTEzNi40NCAyMDYuNjEtMjY0LjUgNDE3LjMxLTMyMC41OCA3MDYuMDN6IiBjbGlwLXJ1bGU9ImV2ZW5vZGQiIGZpbGw9IiNmMGYiIGZpbGwtcnVsZT0iZXZlbm9kZCIgc3Ryb2tlPSIjMDAwIiBzdHJva2UtbWl0ZXJsaW1pdD0iMTAiIHN0cm9rZS13aWR0aD0iMzciLz4KPGNpcmNsZSBjeD0iMTA4MC42IiBjeT0iNzQwLjA1IiByPSIxODMuMzMiIGNsaXAtcnVsZT0iZXZlbm9kZCIgZmlsbC1ydWxlPSJldmVub2RkIi8+CjwvZz4KPC9nPgo8L3N2Zz4K';
+                    var mapPinLime =
+                        'data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyB3aWR0aD0iMTUuNzA5bW0iIGhlaWdodD0iMjYuMTk0bW0iIHZlcnNpb249IjEuMSIgdmlld0JveD0iMCAwIDE1LjcwOTAzOCAyNi4xOTM3NSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4bWxuczpjYz0iaHR0cDovL2NyZWF0aXZlY29tbW9ucy5vcmcvbnMjIiB4bWxuczpkYz0iaHR0cDovL3B1cmwub3JnL2RjL2VsZW1lbnRzLzEuMS8iIHhtbG5zOnJkZj0iaHR0cDovL3d3dy53My5vcmcvMTk5OS8wMi8yMi1yZGYtc3ludGF4LW5zIyI+CjxtZXRhZGF0YT4KPHJkZjpSREY+CjxjYzpXb3JrIHJkZjphYm91dD0iIj4KPGRjOmZvcm1hdD5pbWFnZS9zdmcreG1sPC9kYzpmb3JtYXQ+CjxkYzp0eXBlIHJkZjpyZXNvdXJjZT0iaHR0cDovL3B1cmwub3JnL2RjL2RjbWl0eXBlL1N0aWxsSW1hZ2UiLz4KPGRjOnRpdGxlLz4KPC9jYzpXb3JrPgo8L3JkZjpSREY+CjwvbWV0YWRhdGE+CjxnIHRyYW5zZm9ybT0idHJhbnNsYXRlKC05Ny44MDEgLTEzMS4zKSI+CjxnIHRyYW5zZm9ybT0ibWF0cml4KC4wMTQ0OTcgMCAwIC4wMTQ0OTcgOTAuMDQ5IDEyNy43MSkiPgo8dGl0bGU+TGF5ZXIgMTwvdGl0bGU+CjxwYXRoIGQ9Im0xMDc3LjkgMTk1OS42Yy0zOC43Ny0xOTAuMy0xMDcuMTItMzQ4LjY3LTE4OS45LTQ5NS40NC02MS40MDctMTA4Ljg3LTEzMi41NC0yMDkuMzYtMTk4LjM2LTMxNC45NC0yMS45NzItMzUuMjQtNDAuOTM0LTcyLjQ4LTYyLjA0Ny0xMDkuMDUtNDIuMjE2LTczLjE0LTc2LjQ0NC0xNTcuOTQtNzQuMjY5LTI2Ny45MyAyLjEyNS0xMDcuNDcgMzMuMjA4LTE5My42OCA3OC4wMy0yNjQuMTcgNzMuNzE5LTExNS45NCAxOTcuMi0yMTAuOTkgMzYyLjg4LTIzNS45NyAxMzUuNDctMjAuNDI0IDI2Mi40OCAxNC4wODIgMzUyLjU0IDY2Ljc0OCA3My42IDQzLjAzOCAxMzAuNiAxMDAuNTMgMTczLjkyIDE2OC4yOCA0NS4yMiA3MC43MTYgNzYuMzYgMTU0LjI2IDc4Ljk3IDI2My4yMyAxLjM0IDU1LjgzLTcuOCAxMDcuNTMtMjAuNjggMTUwLjQyLTEzLjAzIDQzLjQwOS0zMy45OSA3OS42OTgtNTIuNjQgMTE4LjQ2LTM2LjQxIDc1LjY2LTgyLjA1IDE0NC45OC0xMjcuODYgMjE0LjM0LTEzNi40NCAyMDYuNjEtMjY0LjUgNDE3LjMxLTMyMC41OCA3MDYuMDN6IiBjbGlwLXJ1bGU9ImV2ZW5vZGQiIGZpbGw9IiMwZjAiIGZpbGwtcnVsZT0iZXZlbm9kZCIgc3Ryb2tlPSIjMDAwIiBzdHJva2UtbWl0ZXJsaW1pdD0iMTAiIHN0cm9rZS13aWR0aD0iMzciLz4KPGNpcmNsZSBjeD0iMTA4MC42IiBjeT0iNzQwLjA1IiByPSIxODMuMzMiIGNsaXAtcnVsZT0iZXZlbm9kZCIgZmlsbC1ydWxlPSJldmVub2RkIi8+CjwvZz4KPC9nPgo8L3N2Zz4K';
+                    var mapPinPurple =
+                        'data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyB3aWR0aD0iMTUuNzA5bW0iIGhlaWdodD0iMjYuMTk0bW0iIHZlcnNpb249IjEuMSIgdmlld0JveD0iMCAwIDE1LjcwOTAzOCAyNi4xOTM3NSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4bWxuczpjYz0iaHR0cDovL2NyZWF0aXZlY29tbW9ucy5vcmcvbnMjIiB4bWxuczpkYz0iaHR0cDovL3B1cmwub3JnL2RjL2VsZW1lbnRzLzEuMS8iIHhtbG5zOnJkZj0iaHR0cDovL3d3dy53My5vcmcvMTk5OS8wMi8yMi1yZGYtc3ludGF4LW5zIyI+CjxtZXRhZGF0YT4KPHJkZjpSREY+CjxjYzpXb3JrIHJkZjphYm91dD0iIj4KPGRjOmZvcm1hdD5pbWFnZS9zdmcreG1sPC9kYzpmb3JtYXQ+CjxkYzp0eXBlIHJkZjpyZXNvdXJjZT0iaHR0cDovL3B1cmwub3JnL2RjL2RjbWl0eXBlL1N0aWxsSW1hZ2UiLz4KPGRjOnRpdGxlLz4KPC9jYzpXb3JrPgo8L3JkZjpSREY+CjwvbWV0YWRhdGE+CjxnIHRyYW5zZm9ybT0idHJhbnNsYXRlKC05Ny44MDEgLTEzMS4zKSI+CjxnIHRyYW5zZm9ybT0ibWF0cml4KC4wMTQ0OTcgMCAwIC4wMTQ0OTcgOTAuMDQ5IDEyNy43MSkiPgo8dGl0bGU+TGF5ZXIgMTwvdGl0bGU+CjxwYXRoIGQ9Im0xMDc3LjkgMTk1OS42Yy0zOC43Ny0xOTAuMy0xMDcuMTItMzQ4LjY3LTE4OS45LTQ5NS40NC02MS40MDctMTA4Ljg3LTEzMi41NC0yMDkuMzYtMTk4LjM2LTMxNC45NC0yMS45NzItMzUuMjQtNDAuOTM0LTcyLjQ4LTYyLjA0Ny0xMDkuMDUtNDIuMjE2LTczLjE0LTc2LjQ0NC0xNTcuOTQtNzQuMjY5LTI2Ny45MyAyLjEyNS0xMDcuNDcgMzMuMjA4LTE5My42OCA3OC4wMy0yNjQuMTcgNzMuNzE5LTExNS45NCAxOTcuMi0yMTAuOTkgMzYyLjg4LTIzNS45NyAxMzUuNDctMjAuNDI0IDI2Mi40OCAxNC4wODIgMzUyLjU0IDY2Ljc0OCA3My42IDQzLjAzOCAxMzAuNiAxMDAuNTMgMTczLjkyIDE2OC4yOCA0NS4yMiA3MC43MTYgNzYuMzYgMTU0LjI2IDc4Ljk3IDI2My4yMyAxLjM0IDU1LjgzLTcuOCAxMDcuNTMtMjAuNjggMTUwLjQyLTEzLjAzIDQzLjQwOS0zMy45OSA3OS42OTgtNTIuNjQgMTE4LjQ2LTM2LjQxIDc1LjY2LTgyLjA1IDE0NC45OC0xMjcuODYgMjE0LjM0LTEzNi40NCAyMDYuNjEtMjY0LjUgNDE3LjMxLTMyMC41OCA3MDYuMDN6IiBjbGlwLXJ1bGU9ImV2ZW5vZGQiIGZpbGw9IiM4MDAwODAiIGZpbGwtcnVsZT0iZXZlbm9kZCIgc3Ryb2tlPSIjMDAwIiBzdHJva2UtbWl0ZXJsaW1pdD0iMTAiIHN0cm9rZS13aWR0aD0iMzciLz4KPGNpcmNsZSBjeD0iMTA4MC42IiBjeT0iNzQwLjA1IiByPSIxODMuMzMiIGNsaXAtcnVsZT0iZXZlbm9kZCIgZmlsbC1ydWxlPSJldmVub2RkIi8+CjwvZz4KPC9nPgo8L3N2Zz4K';
+                    var mapPinRed =
+                        'data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyB3aWR0aD0iMTUuNzA5bW0iIGhlaWdodD0iMjYuMTk0bW0iIHZlcnNpb249IjEuMSIgdmlld0JveD0iMCAwIDE1LjcwOTAzOCAyNi4xOTM3NSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4bWxuczpjYz0iaHR0cDovL2NyZWF0aXZlY29tbW9ucy5vcmcvbnMjIiB4bWxuczpkYz0iaHR0cDovL3B1cmwub3JnL2RjL2VsZW1lbnRzLzEuMS8iIHhtbG5zOnJkZj0iaHR0cDovL3d3dy53My5vcmcvMTk5OS8wMi8yMi1yZGYtc3ludGF4LW5zIyI+CjxtZXRhZGF0YT4KPHJkZjpSREY+CjxjYzpXb3JrIHJkZjphYm91dD0iIj4KPGRjOmZvcm1hdD5pbWFnZS9zdmcreG1sPC9kYzpmb3JtYXQ+CjxkYzp0eXBlIHJkZjpyZXNvdXJjZT0iaHR0cDovL3B1cmwub3JnL2RjL2RjbWl0eXBlL1N0aWxsSW1hZ2UiLz4KPGRjOnRpdGxlLz4KPC9jYzpXb3JrPgo8L3JkZjpSREY+CjwvbWV0YWRhdGE+CjxnIHRyYW5zZm9ybT0idHJhbnNsYXRlKC05Ny44MDEgLTEzMS4zKSI+CjxnIHRyYW5zZm9ybT0ibWF0cml4KC4wMTQ0OTcgMCAwIC4wMTQ0OTcgOTAuMDQ5IDEyNy43MSkiPgo8dGl0bGU+TGF5ZXIgMTwvdGl0bGU+CjxwYXRoIGQ9Im0xMDc3LjkgMTk1OS42Yy0zOC43Ny0xOTAuMy0xMDcuMTItMzQ4LjY3LTE4OS45LTQ5NS40NC02MS40MDctMTA4Ljg3LTEzMi41NC0yMDkuMzYtMTk4LjM2LTMxNC45NC0yMS45NzItMzUuMjQtNDAuOTM0LTcyLjQ4LTYyLjA0Ny0xMDkuMDUtNDIuMjE2LTczLjE0LTc2LjQ0NC0xNTcuOTQtNzQuMjY5LTI2Ny45MyAyLjEyNS0xMDcuNDcgMzMuMjA4LTE5My42OCA3OC4wMy0yNjQuMTcgNzMuNzE5LTExNS45NCAxOTcuMi0yMTAuOTkgMzYyLjg4LTIzNS45NyAxMzUuNDctMjAuNDI0IDI2Mi40OCAxNC4wODIgMzUyLjU0IDY2Ljc0OCA3My42IDQzLjAzOCAxMzAuNiAxMDAuNTMgMTczLjkyIDE2OC4yOCA0NS4yMiA3MC43MTYgNzYuMzYgMTU0LjI2IDc4Ljk3IDI2My4yMyAxLjM0IDU1LjgzLTcuOCAxMDcuNTMtMjAuNjggMTUwLjQyLTEzLjAzIDQzLjQwOS0zMy45OSA3OS42OTgtNTIuNjQgMTE4LjQ2LTM2LjQxIDc1LjY2LTgyLjA1IDE0NC45OC0xMjcuODYgMjE0LjM0LTEzNi40NCAyMDYuNjEtMjY0LjUgNDE3LjMxLTMyMC41OCA3MDYuMDN6IiBjbGlwLXJ1bGU9ImV2ZW5vZGQiIGZpbGw9IiNmMDAiIGZpbGwtcnVsZT0iZXZlbm9kZCIgc3Ryb2tlPSIjMDAwIiBzdHJva2UtbWl0ZXJsaW1pdD0iMTAiIHN0cm9rZS13aWR0aD0iMzciLz4KPGNpcmNsZSBjeD0iMTA4MC42IiBjeT0iNzQwLjA1IiByPSIxODMuMzMiIGNsaXAtcnVsZT0iZXZlbm9kZCIgZmlsbC1ydWxlPSJldmVub2RkIi8+CjwvZz4KPC9nPgo8L3N2Zz4K';
+                    var mapPinTeal =
+                        'data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyB3aWR0aD0iMTUuNzA5bW0iIGhlaWdodD0iMjYuMTk0bW0iIHZlcnNpb249IjEuMSIgdmlld0JveD0iMCAwIDE1LjcwOTAzOCAyNi4xOTM3NSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4bWxuczpjYz0iaHR0cDovL2NyZWF0aXZlY29tbW9ucy5vcmcvbnMjIiB4bWxuczpkYz0iaHR0cDovL3B1cmwub3JnL2RjL2VsZW1lbnRzLzEuMS8iIHhtbG5zOnJkZj0iaHR0cDovL3d3dy53My5vcmcvMTk5OS8wMi8yMi1yZGYtc3ludGF4LW5zIyI+CjxtZXRhZGF0YT4KPHJkZjpSREY+CjxjYzpXb3JrIHJkZjphYm91dD0iIj4KPGRjOmZvcm1hdD5pbWFnZS9zdmcreG1sPC9kYzpmb3JtYXQ+CjxkYzp0eXBlIHJkZjpyZXNvdXJjZT0iaHR0cDovL3B1cmwub3JnL2RjL2RjbWl0eXBlL1N0aWxsSW1hZ2UiLz4KPGRjOnRpdGxlLz4KPC9jYzpXb3JrPgo8L3JkZjpSREY+CjwvbWV0YWRhdGE+CjxnIHRyYW5zZm9ybT0idHJhbnNsYXRlKC05Ny44MDEgLTEzMS4zKSI+CjxnIHRyYW5zZm9ybT0ibWF0cml4KC4wMTQ0OTcgMCAwIC4wMTQ0OTcgOTAuMDQ5IDEyNy43MSkiPgo8dGl0bGU+TGF5ZXIgMTwvdGl0bGU+CjxwYXRoIGQ9Im0xMDc3LjkgMTk1OS42Yy0zOC43Ny0xOTAuMy0xMDcuMTItMzQ4LjY3LTE4OS45LTQ5NS40NC02MS40MDctMTA4Ljg3LTEzMi41NC0yMDkuMzYtMTk4LjM2LTMxNC45NC0yMS45NzItMzUuMjQtNDAuOTM0LTcyLjQ4LTYyLjA0Ny0xMDkuMDUtNDIuMjE2LTczLjE0LTc2LjQ0NC0xNTcuOTQtNzQuMjY5LTI2Ny45MyAyLjEyNS0xMDcuNDcgMzMuMjA4LTE5My42OCA3OC4wMy0yNjQuMTcgNzMuNzE5LTExNS45NCAxOTcuMi0yMTAuOTkgMzYyLjg4LTIzNS45NyAxMzUuNDctMjAuNDI0IDI2Mi40OCAxNC4wODIgMzUyLjU0IDY2Ljc0OCA3My42IDQzLjAzOCAxMzAuNiAxMDAuNTMgMTczLjkyIDE2OC4yOCA0NS4yMiA3MC43MTYgNzYuMzYgMTU0LjI2IDc4Ljk3IDI2My4yMyAxLjM0IDU1LjgzLTcuOCAxMDcuNTMtMjAuNjggMTUwLjQyLTEzLjAzIDQzLjQwOS0zMy45OSA3OS42OTgtNTIuNjQgMTE4LjQ2LTM2LjQxIDc1LjY2LTgyLjA1IDE0NC45OC0xMjcuODYgMjE0LjM0LTEzNi40NCAyMDYuNjEtMjY0LjUgNDE3LjMxLTMyMC41OCA3MDYuMDN6IiBjbGlwLXJ1bGU9ImV2ZW5vZGQiIGZpbGw9IiMwMDgwODAiIGZpbGwtcnVsZT0iZXZlbm9kZCIgc3Ryb2tlPSIjMDAwIiBzdHJva2UtbWl0ZXJsaW1pdD0iMTAiIHN0cm9rZS13aWR0aD0iMzciLz4KPGNpcmNsZSBjeD0iMTA4MC42IiBjeT0iNzQwLjA1IiByPSIxODMuMzMiIGNsaXAtcnVsZT0iZXZlbm9kZCIgZmlsbC1ydWxlPSJldmVub2RkIi8+CjwvZz4KPC9nPgo8L3N2Zz4K';
+                    var mapPinYellow =
+                        'data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyB3aWR0aD0iMTUuNzA5bW0iIGhlaWdodD0iMjYuMTk0bW0iIHZlcnNpb249IjEuMSIgdmlld0JveD0iMCAwIDE1LjcwOTAzOCAyNi4xOTM3NSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4bWxuczpjYz0iaHR0cDovL2NyZWF0aXZlY29tbW9ucy5vcmcvbnMjIiB4bWxuczpkYz0iaHR0cDovL3B1cmwub3JnL2RjL2VsZW1lbnRzLzEuMS8iIHhtbG5zOnJkZj0iaHR0cDovL3d3dy53My5vcmcvMTk5OS8wMi8yMi1yZGYtc3ludGF4LW5zIyI+CjxtZXRhZGF0YT4KPHJkZjpSREY+CjxjYzpXb3JrIHJkZjphYm91dD0iIj4KPGRjOmZvcm1hdD5pbWFnZS9zdmcreG1sPC9kYzpmb3JtYXQ+CjxkYzp0eXBlIHJkZjpyZXNvdXJjZT0iaHR0cDovL3B1cmwub3JnL2RjL2RjbWl0eXBlL1N0aWxsSW1hZ2UiLz4KPGRjOnRpdGxlLz4KPC9jYzpXb3JrPgo8L3JkZjpSREY+CjwvbWV0YWRhdGE+CjxnIHRyYW5zZm9ybT0idHJhbnNsYXRlKC05Ny44MDEgLTEzMS4zKSI+CjxnIHRyYW5zZm9ybT0ibWF0cml4KC4wMTQ0OTcgMCAwIC4wMTQ0OTcgOTAuMDQ5IDEyNy43MSkiPgo8dGl0bGU+TGF5ZXIgMTwvdGl0bGU+CjxwYXRoIGQ9Im0xMDc3LjkgMTk1OS42Yy0zOC43Ny0xOTAuMy0xMDcuMTItMzQ4LjY3LTE4OS45LTQ5NS40NC02MS40MDctMTA4Ljg3LTEzMi41NC0yMDkuMzYtMTk4LjM2LTMxNC45NC0yMS45NzItMzUuMjQtNDAuOTM0LTcyLjQ4LTYyLjA0Ny0xMDkuMDUtNDIuMjE2LTczLjE0LTc2LjQ0NC0xNTcuOTQtNzQuMjY5LTI2Ny45MyAyLjEyNS0xMDcuNDcgMzMuMjA4LTE5My42OCA3OC4wMy0yNjQuMTcgNzMuNzE5LTExNS45NCAxOTcuMi0yMTAuOTkgMzYyLjg4LTIzNS45NyAxMzUuNDctMjAuNDI0IDI2Mi40OCAxNC4wODIgMzUyLjU0IDY2Ljc0OCA3My42IDQzLjAzOCAxMzAuNiAxMDAuNTMgMTczLjkyIDE2OC4yOCA0NS4yMiA3MC43MTYgNzYuMzYgMTU0LjI2IDc4Ljk3IDI2My4yMyAxLjM0IDU1LjgzLTcuOCAxMDcuNTMtMjAuNjggMTUwLjQyLTEzLjAzIDQzLjQwOS0zMy45OSA3OS42OTgtNTIuNjQgMTE4LjQ2LTM2LjQxIDc1LjY2LTgyLjA1IDE0NC45OC0xMjcuODYgMjE0LjM0LTEzNi40NCAyMDYuNjEtMjY0LjUgNDE3LjMxLTMyMC41OCA3MDYuMDN6IiBjbGlwLXJ1bGU9ImV2ZW5vZGQiIGZpbGw9IiNmZjAiIGZpbGwtcnVsZT0iZXZlbm9kZCIgc3Ryb2tlPSIjMDAwIiBzdHJva2UtbWl0ZXJsaW1pdD0iMTAiIHN0cm9rZS13aWR0aD0iMzciLz4KPGNpcmNsZSBjeD0iMTA4MC42IiBjeT0iNzQwLjA1IiByPSIxODMuMzMiIGNsaXAtcnVsZT0iZXZlbm9kZCIgZmlsbC1ydWxlPSJldmVub2RkIi8+CjwvZz4KPC9nPgo8L3N2Zz4K';
+                    var mapPinNavy =
+                        'data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyB3aWR0aD0iMTUuNzA5bW0iIGhlaWdodD0iMjYuMTk0bW0iIHZlcnNpb249IjEuMSIgdmlld0JveD0iMCAwIDE1LjcwOTAzOCAyNi4xOTM3NSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4bWxuczpjYz0iaHR0cDovL2NyZWF0aXZlY29tbW9ucy5vcmcvbnMjIiB4bWxuczpkYz0iaHR0cDovL3B1cmwub3JnL2RjL2VsZW1lbnRzLzEuMS8iIHhtbG5zOnJkZj0iaHR0cDovL3d3dy53My5vcmcvMTk5OS8wMi8yMi1yZGYtc3ludGF4LW5zIyI+CjxtZXRhZGF0YT4KPHJkZjpSREY+CjxjYzpXb3JrIHJkZjphYm91dD0iIj4KPGRjOmZvcm1hdD5pbWFnZS9zdmcreG1sPC9kYzpmb3JtYXQ+CjxkYzp0eXBlIHJkZjpyZXNvdXJjZT0iaHR0cDovL3B1cmwub3JnL2RjL2RjbWl0eXBlL1N0aWxsSW1hZ2UiLz4KPGRjOnRpdGxlLz4KPC9jYzpXb3JrPgo8L3JkZjpSREY+CjwvbWV0YWRhdGE+CjxnIHRyYW5zZm9ybT0idHJhbnNsYXRlKC05Ny44MDEgLTEzMS4zKSI+CjxnIHRyYW5zZm9ybT0ibWF0cml4KC4wMTQ0OTcgMCAwIC4wMTQ0OTcgOTAuMDQ5IDEyNy43MSkiPgo8dGl0bGU+TGF5ZXIgMTwvdGl0bGU+CjxwYXRoIGQ9Im0xMDc3LjkgMTk1OS42Yy0zOC43Ny0xOTAuMy0xMDcuMTItMzQ4LjY3LTE4OS45LTQ5NS40NC02MS40MDctMTA4Ljg3LTEzMi41NC0yMDkuMzYtMTk4LjM2LTMxNC45NC0yMS45NzItMzUuMjQtNDAuOTM0LTcyLjQ4LTYyLjA0Ny0xMDkuMDUtNDIuMjE2LTczLjE0LTc2LjQ0NC0xNTcuOTQtNzQuMjY5LTI2Ny45MyAyLjEyNS0xMDcuNDcgMzMuMjA4LTE5My42OCA3OC4wMy0yNjQuMTcgNzMuNzE5LTExNS45NCAxOTcuMi0yMTAuOTkgMzYyLjg4LTIzNS45NyAxMzUuNDctMjAuNDI0IDI2Mi40OCAxNC4wODIgMzUyLjU0IDY2Ljc0OCA3My42IDQzLjAzOCAxMzAuNiAxMDAuNTMgMTczLjkyIDE2OC4yOCA0NS4yMiA3MC43MTYgNzYuMzYgMTU0LjI2IDc4Ljk3IDI2My4yMyAxLjM0IDU1LjgzLTcuOCAxMDcuNTMtMjAuNjggMTUwLjQyLTEzLjAzIDQzLjQwOS0zMy45OSA3OS42OTgtNTIuNjQgMTE4LjQ2LTM2LjQxIDc1LjY2LTgyLjA1IDE0NC45OC0xMjcuODYgMjE0LjM0LTEzNi40NCAyMDYuNjEtMjY0LjUgNDE3LjMxLTMyMC41OCA3MDYuMDN6IiBjbGlwLXJ1bGU9ImV2ZW5vZGQiIGZpbGw9IiMwMDAwODAiIGZpbGwtcnVsZT0iZXZlbm9kZCIgc3Ryb2tlPSIjMDAwIiBzdHJva2UtbWl0ZXJsaW1pdD0iMTAiIHN0cm9rZS13aWR0aD0iMzciLz4KPGNpcmNsZSBjeD0iMTA4MC42IiBjeT0iNzQwLjA1IiByPSIxODMuMzMiIGNsaXAtcnVsZT0iZXZlbm9kZCIgZmlsbC1ydWxlPSJldmVub2RkIi8+CjwvZz4KPC9nPgo8L3N2Zz4K';
+                    var mapPinAqua =
+                        'data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyB3aWR0aD0iMTUuNzA5bW0iIGhlaWdodD0iMjYuMTk0bW0iIHZlcnNpb249IjEuMSIgdmlld0JveD0iMCAwIDE1LjcwOTAzOCAyNi4xOTM3NSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4bWxuczpjYz0iaHR0cDovL2NyZWF0aXZlY29tbW9ucy5vcmcvbnMjIiB4bWxuczpkYz0iaHR0cDovL3B1cmwub3JnL2RjL2VsZW1lbnRzLzEuMS8iIHhtbG5zOnJkZj0iaHR0cDovL3d3dy53My5vcmcvMTk5OS8wMi8yMi1yZGYtc3ludGF4LW5zIyI+CjxtZXRhZGF0YT4KPHJkZjpSREY+CjxjYzpXb3JrIHJkZjphYm91dD0iIj4KPGRjOmZvcm1hdD5pbWFnZS9zdmcreG1sPC9kYzpmb3JtYXQ+CjxkYzp0eXBlIHJkZjpyZXNvdXJjZT0iaHR0cDovL3B1cmwub3JnL2RjL2RjbWl0eXBlL1N0aWxsSW1hZ2UiLz4KPGRjOnRpdGxlLz4KPC9jYzpXb3JrPgo8L3JkZjpSREY+CjwvbWV0YWRhdGE+CjxnIHRyYW5zZm9ybT0idHJhbnNsYXRlKC05Ny44MDEgLTEzMS4zKSI+CjxnIHRyYW5zZm9ybT0ibWF0cml4KC4wMTQ0OTcgMCAwIC4wMTQ0OTcgOTAuMDQ5IDEyNy43MSkiPgo8dGl0bGU+TGF5ZXIgMTwvdGl0bGU+CjxwYXRoIGQ9Im0xMDc3LjkgMTk1OS42Yy0zOC43Ny0xOTAuMy0xMDcuMTItMzQ4LjY3LTE4OS45LTQ5NS40NC02MS40MDctMTA4Ljg3LTEzMi41NC0yMDkuMzYtMTk4LjM2LTMxNC45NC0yMS45NzItMzUuMjQtNDAuOTM0LTcyLjQ4LTYyLjA0Ny0xMDkuMDUtNDIuMjE2LTczLjE0LTc2LjQ0NC0xNTcuOTQtNzQuMjY5LTI2Ny45MyAyLjEyNS0xMDcuNDcgMzMuMjA4LTE5My42OCA3OC4wMy0yNjQuMTcgNzMuNzE5LTExNS45NCAxOTcuMi0yMTAuOTkgMzYyLjg4LTIzNS45NyAxMzUuNDctMjAuNDI0IDI2Mi40OCAxNC4wODIgMzUyLjU0IDY2Ljc0OCA3My42IDQzLjAzOCAxMzAuNiAxMDAuNTMgMTczLjkyIDE2OC4yOCA0NS4yMiA3MC43MTYgNzYuMzYgMTU0LjI2IDc4Ljk3IDI2My4yMyAxLjM0IDU1LjgzLTcuOCAxMDcuNTMtMjAuNjggMTUwLjQyLTEzLjAzIDQzLjQwOS0zMy45OSA3OS42OTgtNTIuNjQgMTE4LjQ2LTM2LjQxIDc1LjY2LTgyLjA1IDE0NC45OC0xMjcuODYgMjE0LjM0LTEzNi40NCAyMDYuNjEtMjY0LjUgNDE3LjMxLTMyMC41OCA3MDYuMDN6IiBjbGlwLXJ1bGU9ImV2ZW5vZGQiIGZpbGw9IiMwZmYiIGZpbGwtcnVsZT0iZXZlbm9kZCIgc3Ryb2tlPSIjMDAwIiBzdHJva2UtbWl0ZXJsaW1pdD0iMTAiIHN0cm9rZS13aWR0aD0iMzciLz4KPGNpcmNsZSBjeD0iMTA4MC42IiBjeT0iNzQwLjA1IiByPSIxODMuMzMiIGNsaXAtcnVsZT0iZXZlbm9kZCIgZmlsbC1ydWxlPSJldmVub2RkIi8+CjwvZz4KPC9nPgo8L3N2Zz4K';
+
+
+                    sp = new sGis.SpatialProcessor({
+                            //url: 'http://gisoivtest.mos.ru/IntegrationGIS/SpatialProcessor/IIS/', login: 'jspublic', password: 'jspublic',
+                            url: 'https://gisoiv.mos.ru/IntegrationGIS/SpatialProcessor/IIS/',
+                            login: 'jspublic',
+                            password: 'jspublic',
+                            mapWrapper: 'map',
+                            services: ['2gis', 'MKAD_TTK_SK'],
+                        }),
+                        featureLayer = new sGis.FeatureLayer();
+                    featureLayer2 = new sGis.FeatureLayer();
+                    sp.map.addLayer(featureLayer2);
+
+                    sp.service['2gis'].addListner('initialize',
+                        function() {
+                            sp.map.addLayer(featureLayer);
+                            success: setChecked();
+                        });
+
+                    sp.service['2gis'].addListner('initialize',
+                        function() {
+                            sp.service['2gis'].layer.cycleX = false;
+                        });
+
+                    sp.service['MKAD_TTK_SK'].activeLayers = [0, 1, 2];
+
+                    function setChecked() {
+                        var html =
+                            '<div class="control_pane" style="padding-left: 10px;"><input type="checkbox" name="controls" id="mkadTtkSk" onclick="toggleMkadTtkSk()"/><label for="mkadTtkSk" style="margin-top: 3px;"> Зоны ограничения</label>';
+
+                        $('#map > div > div:nth-child(1)').append(html);
+                        document.getElementById('mkadTtkSk').checked = true;
+                    };
+
+                    var addressList = [];
+                    var addressBtiNotFound = '';
+
+                    //todo check .Longitude and d.Latitude for empty string, symbols or not other then long
+
+                    @{
+                        if (Model.Route != null && Model.Route.TochkiMarshruta != null) {
+                            foreach (var d in Model.Route.TochkiMarshruta)
+                            {
+                                //if addressType equals "пересечение МКАД" -> find address and coordinates in db (BTI) 
+                                if(d.TypePoint.TypeRoutePoint == "пересечение МКАД"){
+                        
+                                    var entryObject2 = EntityManager<Ientry>.Instance.Find(x => x.wrong_name == d.Street).FirstOrDefault();
+                        
+                                    if(entryObject2 !=null){
+                                        //address found but no coordinates?
+                                        if ((entryObject2.Longitude != null && !String.IsNullOrEmpty(entryObject2.Longitude)) && (entryObject2.Latitude != null && !String.IsNullOrEmpty(entryObject2.Latitude))){
+                                            @:addressList.push({ street: "@entryObject2.wrong_name", house: "@d.Dom", type: "@d.TypePoint.TypeRoutePoint", long: @entryObject2.Longitude, lat: @entryObject2.Latitude });
+                                        }else{
+                                            @:addressList.push({ street: "@entryObject2.wrong_name", house: "@d.Dom", type: "@d.TypePoint.TypeRoutePoint", long: 37.618946, lat: 55.754815 });
+                                        }                    
+                      
+                        
+                                    }else{ //address not found? set Moscow centre lat long
+                                        @:addressList.push({ street: "Ошибка: Адрес не найден в справочнике", house: "", type: "@d.TypePoint.TypeRoutePoint", long: 37.618946, lat: 55.754815 });
+                                        @:addressBtiNotFound = "Ошибка: Адрес не найден в справочнике";
+                                    }                      
+                           
+                                }
+                                //addressType not "пересечение МКАД"
+                                else{ 
+                                    if ((d.Longitude != null && !String.IsNullOrEmpty(d.Longitude))  && (d.Latitude != null && !String.IsNullOrEmpty(d.Latitude)))
+                                    {
+                                        @:addressList.push({ street: "@d.Street", house: "@d.Dom", type: "@d.TypePoint.TypeRoutePoint", long: @d.Longitude, lat: @d.Latitude });
+                                    }
+                                    else
+                                    {
+                                        @:addressList.push({ street: "@d.Street", house: "@d.Dom", type: "@d.TypePoint.TypeRoutePoint" });
+                                    }
+                                }
+
+                            }//end foreach
+                        }//end if
+                    }
+
+                    console.log('addressBtiNotFound ->', addressBtiNotFound);
+                    console.log('addressList ->', addressList);
+
+                    var targetPin = '';
+
+                    addressList.forEach(function(address, idx) {
+
+                        if (!address.street) {
+                            return;
+                        }
+                        //var queryString = 'город Москва' + ', ' + address.street;
+                        var queryString = address.street;
+
+                        if (address.house) {
+                            //queryString += ', дом ' + address.house; //gives error
+                            queryString += ', ' + address.house; //try without house
+                        }
+                        var html = '<div><b>' + address.type + ': ' + '</b><br> ' + queryString + '</div>';
+
+                        //switch to targetPin
+                        targetPin = '';
+
+                        switch (address.type) {
+                        case "Точка въезда":
+                            targetPin = mapPinTeal;
+                            break;
+                        case "место разгрузки (доставки)":
+                            targetPin = mapPinAqua;
+                            break;
+                        case "Точка выезда":
+                            targetPin = mapPinGreen;
+                            break;
+                        case "место стоянки":
+                            targetPin = mapPinFuchsia;
+                            break;
+                        case "маршрут движения (проездная улица)":
+                            targetPin = mapPinNavy;
+                            break;
+                        case "место погрузки":
+                            targetPin = mapPinPurple;
+                            break;
+                        case "пересечение МКАД":
+                            targetPin = mapPinRed;
+                            break;
+                        case "Место жительства":
+                            targetPin = mapPinYellow;
+                            break;
+                        }
+                        // console.log(targetPin);
+
+                        console.log('address.long', address.long);
+                        console.log('address.lat', address.lat);
+
+                        //1. Если в свойствах точки указаны координаты, то ставим точку по указанным координатам. Т.е. в этом случае геокодирование не используем.
+                        if (address.long && address.lat) {
+                            //drawAddressByPoint(html, address.lat, address.long, idx);
+                            drawAddressByPoint(html, address.long, address.lat, idx); //working
+
+                        } else {
+                            //if addressType equals 'пересечение МКАД' get coordinates from yandex, else ehpd
+                            var url = '';
+                            var found = true;
+                            while (found) {
+                                found = false;
+                                queryString = queryString.replace(/0\d+/,
+                                    function(t) {
+                                        found = true;
+                                        var retVal = t.substring(1);
+                                        return retVal;
+                                    });
+                            }
+                            console.log('поисковой запрос:', queryString);
+                            url = 'https://ehpd.mos.ru/services/publish/search_ru?text=' + queryString + '&count=1';
+                            drawAddressByStringEhpd(html, idx, url); //add type arg
+
+                        }
+                    }) //end addressListForEach
+
+                    function drawAddressByPoint(html, long, lat, idx) {
+
+                        addressPointAction(lat, long, html, idx);
+                        //addressPointAction(long,lat, html, idx);
+
+
+                    } //end drawAddressByPoint
+
+
+                    function drawAddressByStringYandex(html, idx, url) {
+
+                        var hdr = $.ajaxSettings.headers;
+                        delete $.ajaxSettings.headers;
+                        $.ajax({
+                            url: url,
+                            success: function(data) {
+                                console.log(data);
+                                $.ajaxSettings.headers = hdr;
+
+                                var pointStrList = data.response.GeoObjectCollection.featureMember["0"].GeoObject.Point.pos.split(' ');
+                                var longNum = parseFloat(pointStrList[0]);
+                                var latNum = parseFloat(pointStrList[1]);
+
+                                addressPointAction(latNum, longNum, html, idx);
+                                //addressPointAction(longNum,latNum, html,idx);
+                            },
+
+                            async: false
+                        })
+                    } //end drawAddressByString
+
+                    function drawAddressByStringEhpd(html, idx, url) {
+
+                        var hdr = $.ajaxSettings.headers;
+                        delete $.ajaxSettings.headers;
+                        $.ajax({
+                            //url: 'https://ehpd.mos.ru/services/publish/search_ru?text=' + queryString + '&count=1',
+                            url: url,
+                            success: function(data) {
+                                console.log(data);
+                                $.ajaxSettings.headers = hdr;
+                                //point/ maptip
+                                var long = data.address.items["0"].ATTRIBUTES.CENTER_Y; //долгота
+                                var lat = data.address.items["0"].ATTRIBUTES.CENTER_X; //широта
+
+                                //addressPointAction(lat,long, html,idx)
+                                addressPointAction(long, lat, html, idx);
+                            },
+
+                            async: false
+                        })
+                    } //end drawAddressByString
+
+                    function addressPointAction(x, y, html, idx) {
+
+                        var position = [x, y];
+                        //var position = [argLong,argLat];
+
+
+                        var point = new sGis.feature.Point(position, { //position = [x,y]
+                            symbol: new sGis.symbol.point.Image({
+                                source: targetPin,
+                                size: 20,
+                                anchorPoint: {
+                                    x: 30,
+                                    y: 100
+                                } //15
+                            })
+                        });
+                        //var shortString = queryString.substr(queryString.indexOf(',') + 1).trim();
+
+                        var mapTip = {};
+                        if (html.length > 90) {
+                            mapTip = new sGis.feature.Maptip(position, {
+                                hidden: true,
+                                style: {
+                                    width: 150,
+                                    height: 90,
+                                    offset: {
+                                        x: 15,
+                                        y: 20
+                                    }
+                                },
+                                //content: button
+                            });
+                        } else if (html.length > 70) {
+                            mapTip = new sGis.feature.Maptip(position, {
+                                hidden: true,
+                                style: {
+                                    width: 150,
+                                    height: 60,
+                                    offset: {
+                                        x: 15,
+                                        y: 20
+                                    }
+                                },
+                                //content: button
+                            });
+                        } else {
+                            mapTip = new sGis.feature.Maptip(position, {
+                                hidden: true,
+                                style: {
+                                    width: 120,
+                                    height: 55,
+                                    offset: {
+                                        x: 15,
+                                        y: 20
+                                    }
+                                },
+                                //content: button
+                            });
+                        }
+
+                        console.log('mapTip', mapTip);
+
+                        mapTips.push(mapTip);
+
+                        mapTip.content = html;
+
+                        //show html
+                        point.addListner('mousemove',
+                            function(idx) {
+                                return function(e) {
+                                    // console.log(e);
+                                    var mapTipLocal = mapTips[idx];
+                                    mapTipLocal.show();
+                                    sp.map.redrawLayer(featureLayer2);
+                                }
+                            }(idx));
+                        //remove html
+                        point.addListner('mouseout',
+                            function(idx) {
+                                return function(e) {
+                                    //console.log('mouseout event fired');
+                                    var mapTipLocal = mapTips[idx];
+                                    mapTipLocal.hide();
+                                    sp.map.redrawLayer(featureLayer2);
+                                }
+                            }(idx));
+
+                        featureLayer2.add([point, mapTip]);
+                    } //end addressPointAction
+
+
+                } //end everGis
+
+                setActiveRow(wktTable, 0, "", true);
+
+                (function fix2GisLabelPosition() {
+                    $('#map > a').css({
+                        'position': 'inherit'
+                    })
+                })();
+            } // if (selectedTab.index() === 8) end
+
+            (function populateDecisionTab() {
+                var mct = document.getElementById('mainContentTable');
+                if (!mct) {
+                    return;
+                }
+                drawPlanLabels(false);
+                drawCalendars(false);
+                drawFiveDaysLabel(false);
+                var commentRow = document.querySelector('#Entity_TabLayout1-6 > div > div > table > tbody > tr > td > table > tbody > tr > ' +
+                    'td:nth-child(1) > div > table > tbody > tr:nth-child(7)');
+                drawCommentLabel(false, commentRow);
+                drawCommentTextArea(false, commentRow);
+                drawOkButton(false); //outside iframe    
+            })(); //end PopulateDecisionTab    
+
+        }); //end ajaxComplete
+
+        //Global functions section TODO refactor to Module Design Pattern 
+
+        function drawPlanLabelsInFrame() { //todo merge with drawPlanLabels fn
+
+            //var firstTargetTable = document.querySelector('#Entity_TabLayout1-6 > div > div > table > tbody > tr > td > table > tbody > tr > td:nth-child(1) > div > table > tbody > tr:nth-child(2) > td > table > tbody > tr > td:nth-child(2) > div > table');
+            var firstTargetTableCell = document.querySelector('#Entity_StartDate_ValueContainer');
+            //var secondTargetTable = document.querySelector('#Entity_TabLayout1-6 > div > div > table > tbody > tr > td > table > tbody > tr > td:nth-child(1) > div > table > tbody > tr:nth-child(4) > td > table > tbody > tr > td:nth-child(2) > div > table');
+            var secondTargetTableCell = document.querySelector('#Entity_ValidityPeriod_ValueContainer');
+
+            if (!firstTargetTableCell || !secondTargetTableCell) {
+                return;
+            }
+
+            if (document.getElementById('firstPlanLblId') || document.getElementById('secondPlanLblId')) {
+                return;
+            }
+
+            drawPlanLbl(firstTargetTableCell, 'firstPlanLblId', 'Плановая');
+            drawPlanLbl(secondTargetTableCell, 'secondPlanLblId', 'Плановая');
+
+            function drawPlanLbl(targetTable, id, txt) {
+                var lblId = ' id="' + id + '"';
+                //var lblHtml = '<tbody><tr><td class="dft_table_td_inputs captionCell"' + lblId + '>' + txt + '</td></tr></tbody>';
+                var lblHtml = '<td class="dft_table_td_inputs captionCell"' + lblId + '>' + txt + '</td>';
+                //targetTable.innerHTML += lblHtml;
+                targetTable.innerHTML = lblHtml;
+
+            }
+
+        };
+
+        function drawPlanLabels(isInFrame) {
+
+            var firstTargetTable = document.querySelector('#Entity_TabLayout1-6 > div > div > table > tbody > tr > td > table > tbody > tr > td:nth-child(1) > div > table > tbody > tr:nth-child(2) > td > table > tbody > tr > td:nth-child(2) > div > table');
+            var secondTargetTable = document.querySelector('#Entity_TabLayout1-6 > div > div > table > tbody > tr > td > table > tbody > tr > td:nth-child(1) > div > table > tbody > tr:nth-child(4) > td > table > tbody > tr > td:nth-child(2) > div > table');
+
+            if (!firstTargetTable || !secondTargetTable) {
+                return;
+            }
+
+            if (document.getElementById('firstPlanLblId') || document.getElementById('secondPlanLblId')) {
+                return;
+            }
+
+            drawPlanLbl(firstTargetTable, 'firstPlanLblId', 'Плановая');
+            drawPlanLbl(secondTargetTable, 'secondPlanLblId', 'Плановая');
+
+            function drawPlanLbl(targetTable, id, txt) {
+                var lblId = ' id="' + id + '"';
+                var lblHtml = '<tbody><tr><td class="dft_table_td_inputs captionCell"' + lblId + '>' + txt + '</td></tr></tbody>';
+                targetTable.innerHTML += lblHtml;
+            }
+        };
+
+        function drawCalendars(isInFrame) {
+            var firstTargetTable = document.querySelector('#Entity_TabLayout1-6 > div > div > table > tbody > tr > td > table > tbody > tr > td:nth-child(1) > div > table > tbody > tr:nth-child(3) > td > table > tbody > tr > td:nth-child(1) > div > table');
+            var firstTargetTableCell = document.querySelector('#Entity_StartDate_ValueContainer');
+            var secondTargetTable = document.querySelector('#Entity_TabLayout1-6 > div > div > table > tbody > tr > td > table > tbody > tr > td:nth-child(1) > div > table > tbody > tr:nth-child(3) > td > table > tbody > tr > td:nth-child(1) > div > table');
+            var secondTargetTableCell = document.querySelector('#Entity_ValidityPeriod_ValueContainer');
+            if (!firstTargetTableCell || !secondTargetTableCell) {
+                return;
+            }
+            //if firstCalendar or secondCalendar already exist, don't create
+            if (document.getElementById('firstCalId') || document.getElementById('secondCalId')) {
+                return;
+            }
+            //get dates from Model
+            var firstCalDate = '@(Model.PlanStartDate)';
+            var secondCalDate = '@(Model.PlanValidityPeriod)';
+            //var isDisabled = operationSuccCell ? true : false;
+            var isDisabled = false;
+
+            if (!firstCalDate && !secondCalDate) { //if razor model data is empty, draw calendar without
+                drawCalendar(firstTargetTableCell, 'firstCalId', null, isDisabled);
+                drawCalendar(secondTargetTableCell, 'secondCalId', null, isDisabled);
+            } else {
+                drawCalendar(firstTargetTableCell, 'firstCalId', firstCalDate, isDisabled);
+                drawCalendar(secondTargetTableCell, 'secondCalId', secondCalDate, isDisabled);
+            }
+
+            function drawCalendar(targetTableCell, id, inTime, isDisabled) {
+                var calId = 'id="' + id + '"';
+                //var calHtml5 = '<tbody><tr><td><input type="text"' + calId + '></td></tr></tbody>';
+                var calHtml5 = '<input type="text"' + calId + '>';
+                if (isDisabled) {
+                    //calHtml5 = '<tbody><tr><td><input disabled type="text"' + calId + '></td></tr></tbody>';
+                    calHtml5 = '<input disabled type="text"' + calId + '>';
+                }
+
+                //targetTableCell.innerHTML += calHtml5;
+                targetTableCell.innerHTML = calHtml5;
+
+                $('#' + id).datepicker({
+                    dateFormat: "dd.mm.yy"
+                });
+                if (inTime !== null) {
+                    $('#' + id).datepicker('setDate', Date.parse(inTime));
+                }
+            }
+        }; //end draw calendars
+
+        function drawFiveDaysLabel(isInFrame) {
+
+            var operationSuccCell = $('#tdContent > div > table').find('td:contains("Операция выполнена успешно")')[0];
+            if (operationSuccCell) {
+                return;
+            }
+
+            if (document.getElementById('fiveDaysBtn')) {
+                return;
+            }
+
+            var vidGosUServiceTypeCode = '@(Model.Zayavlenie != null ? Model.Zayavlenie.VidGosU.ServiceTypeCode : "0")';
+
+            if (vidGosUServiceTypeCode === '020301') {
+
+                var targetTable = document.querySelector('#Entity_TabLayout1-6 > div > div > table > tbody > tr > td > table > tbody > tr > td:nth-child(1) > div > table > tbody > tr:nth-child(4) > td > table > tbody > tr > td:nth-child(4) > div > table');
+                if (!targetTable) {
+                    return;
+                }
+                var fiveDaysBtnHtml = '<table class="show-lines table-form table-ColumnItem" style="">\n<tbody>\n<tr>\n<td>\n<button id="fiveDaysBtn">+ 5 дней</button>\n</td>\n</tr>\n</tbody>\n</table>';
+
+                targetTable.innerHTML += fiveDaysBtnHtml;
+
+                $('#fiveDaysBtn').click(function(event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    var date = $('#firstCalId').datepicker("getDate");
+                    date.setDate(date.getDate() + 5);
+                    $('#secondCalId').datepicker('setDate', date);
+                });
+            }
+        }
+
+        function drawOkButton(isInFrame) { //outside iframe
+            if (document.getElementById('commentsOkBtn')) {
+                return;
+            }
+            var btnTargetCell = document.querySelector('#Entity_TabLayout1-6 > div > div > table > tbody > tr > td > table > tbody > tr > td:nth-child(1) > div > table > tbody > tr:nth-child(8) > td');
+
+            var btnTargetTable = document.querySelector('#Entity_TabLayout1-6 > div > div > table > tbody > tr > td > table > tbody > tr > td:nth-child(1) > div > table > tbody > tr:nth-child(8) > td');
+
+            if (!btnTargetCell) {
+                return;
+            }
+
+            var btnHtml = '<table><tbody><tr><td align="center"><button id="commentsOkBtn"><a><img src="http://ovga.srvdev.ru/content/Images/OkIcons/2.png" style="vertical-align: middle"></a> Принять</button></td></tr></tbody></table>';
+
+            btnTargetTable.removeAttribute('class');
+            btnTargetTable.innerHTML = btnHtml;
+
+            $("#commentsOkBtn").click(function(e) {
+                e.preventDefault();
+                $('body').addClass('waiting');
+                //get calendar and comment values
+                var firstCalDateObj = $('#firstCalId').datepicker('getDate');
+                var secondCalDateObj = $('#secondCalId').datepicker('getDate');
+                var noteStr = $('#commentTxtArCell > textarea').val();
+                var itemIdStr = '@(Model.Id)';
+
+                var firstCalDateStr = $.datepicker.formatDate('yy-mm-dd', firstCalDateObj);
+                var secondCalDateStr = $.datepicker.formatDate('yy-mm-dd', secondCalDateObj);
+                //create url
+                var webQueryUrl = '/Processes/ProcessHeader/RunByWebQuery/';
+                var bpToken = '41082358-2b7b-4217-b8a7-a98038417add';
+
+                var finalUrl = webQueryUrl + bpToken + '?' + 'Item_ID=' + itemIdStr + '&StartDate=' + firstCalDateStr + '&ValidityPeriod=' + secondCalDateStr + '&Note=' + noteStr;
+
+                if (isInFrame) {
+                    $.ajax({
+                        type: "POST",
+                        url: finalUrl,
+                        //data: {id: $("#Shareitem").val(), access_token: $("#access_token").val()},
+                        data: {
+                            Item_ID: itemIdStr,
+                            StartDate: firstCalDateStr,
+                            ValidityPeriod: secondCalDateStr,
+                            Note: noteStr
+                        },
+                        success: function(result) {
+                            //var guidFromLink = window.location.href.match(/uid=(.+?)&/);
+                            //
+                            var currentLocHref = window.location.href;
+                            var selTab = 'selectedTab=Decision';
+                            var notify2 = 'notify=Операция выполнена успешно';
+                            var finalUrl = currentLocHref + '&' + selTab + '&' + notify2;
+                            window.location.href = finalUrl;
+
+                            $('body').removeClass('waiting');
+                        },
+                    });
+                } else {
+                    document.location.href = finalUrl;
+                }
+            });
+        }; //end drawOkButton outSide I frame
+
+        function drawCommentTextArea(isInFrame, commentRow) {
+            if (!commentRow) {
+                return;
+            }
+            if (document.getElementById('commentTxtArCell')) {
+                return;
+            }
+            var commentTxtArCell = document.createElement('td');
+            commentTxtArCell.setAttribute('id', 'commentTxtArCell');
+            commentRow.appendChild(commentTxtArCell);
+            var commentTxtAr = document.createElement('textarea');
+            commentTxtAr.setAttribute('rows', '10');
+            commentTxtAr.setAttribute('cols', '50');
+
+            var modelComment = '@(Model.Comment)';
+
+            if (modelComment) {
+                commentTxtAr.value = modelComment;
+            }
+            commentTxtArCell.appendChild(commentTxtAr);
+        } //end drawCommentTextArea
+
+        function drawCommentLabel(isInFrame, commentRow) {
+
+            if (!commentRow) {
+                return;
+            }
+
+            var commentTxtLblCell = document.querySelector('#Entity_TabLayout1-6 > div > div > table > tbody > tr > td > table > tbody > tr >' +
+                'td:nth-child(1) > div > table > tbody > tr:nth-child(7) > td.table-SingleColumnItem');
+            if (!commentTxtLblCell) { //wrong page?
+                return;
+            }
+
+            //if already contains comments stuff, skip
+            if (document.getElementById('commentTxtLblCell')) {
+                return;
+            }
+            commentTxtLblCell.setAttribute('id', 'commentTxtLblCell');
+            commentTxtLblCell.setAttribute('colspan', '1');
+            commentTxtLblCell.setAttribute('class', 'dft_table_td_inputs captionCell');
+            commentTxtLblCell.innerText = 'Комментарий';
+            commentRow.appendChild(commentTxtLblCell);
+
+        }; //drawCommentLabel
+
+        function setOnClickHandlers(contentTable) {
+            if (!contentTable || contentTable.rows == null) {
+                return;
+            }
+            for (var i = 0; i < contentTable.rows.length; i++) {
+                var row = contentTable.rows[i];
+                var firstCell = row.querySelector('td:first-child');
+                onclickHandlerCreatorOn(firstCell);
+            }
+
+            function onclickHandlerCreatorOn(targetCell) {
+
+                $(targetCell).contents().wrap('<a href="#"></a>');
+
+                var anchor = targetCell.firstElementChild;
+                if (anchor === null) {
+                    return;
+                }
+                if (!anchor.href) { //href already removed or empty?
+                    return;
+                }
+                //anchor.setAttribute('data-target-link', anchor.href);
+                anchor.removeAttribute('href');
+                //проверить есть у элемента аттрибут "onclick".
+                if (!anchor.hasAttribute('onclick')) {
+                    anchor.setAttribute('onclick', 'drawChosenWktRoute(event,this); return false;');
+                }
+            }
+        } //end setOnClickHandlers
+
+        function toggleMkadTtkSk() {
+            var elem = document.getElementById('mkadTtkSk');
+            if (elem.checked) {
+                sp.service['MKAD_TTK_SK'].display = true;
+            } else {
+                sp.service['MKAD_TTK_SK'].display = false;
+            }
+        } // end toggleMkadTtkSk
+
+        function drawChosenWktRoute(event, obj) {
+            event.preventDefault();
+            event.stopPropagation();
+            //var rowIndex = obj.parentElement.parentElement.rowIndex;
+            var row = obj.parentElement.parentElement;
+
+            var idWkt = '';
+            var idx;
+            for (idx = 0; idx < row.cells.length; idx++) {
+                var cell = row.cells[idx];
+                if (cell.children && cell.children.length > 0) {
+                    if (cell.children['0'].attributes && cell.children['0'].attributes['0'].value === 'WKT') {
+                        var link = cell.querySelector('#WKT > div.html_string > a').getAttribute("href");
+                        idWkt = link.split('id=').pop();
+                        break;
+                    }
+                } //end if
+            }
+            //drawRoute(rowIndex);
+            setActiveRow(wktTable, row.rowIndex, idWkt, false);
+        } //drawChosenWktRoute
+
+        function setActiveRow(contenTable, idx, guid, isInit) {
+            //todo add argument to fx - isInit
+            //let drawroute
+
+            if (isInit) {
+                //get rgList and sort by date. pass latest .xml to drawRoute
+                var latestObject = rgList.sort(function(a, b) {
+                    return new Date(b.dateAnswer).getTime() - new Date(a.dateAnswer).getTime()
+                })[0];
+
+                if (!latestObject)
+                    return;
+
+                drawRoute(latestObject.xml);
+
+                //console.log('contenTable',contenTable);
+                var rowIndex = 0;
+                for (var i = 0, row; row = contenTable.rows[i]; i++) {
+
+                    for (var j = 0, cell; cell = row.cells[j]; j++) {
+                        //console.log('cell',cell);
+
+                        var anchor = cell.querySelector('#WKT > div.html_string > a');
+                        if (anchor) {
+                            var idWkt = anchor.getAttribute("href").split('id=').pop();
+                            if (idWkt === latestObject.id) {
+                                rowIndex = cell.parentElement.rowIndex;
+                                break;
+                            }
+                        } else {
+                            //console.log('nothing found')
+                        }
+                    }
+                }
+
+                $(contenTable.rows[rowIndex]).addClass('active-row').siblings().removeClass('active-row');
+
+            } else {
+                var wktXml = getWktById(guid, rgList);
+                drawRoute(wktXml);
+                $(contenTable.rows[idx]).addClass('active-row').siblings().removeClass('active-row');
+            }
+
+            function getWktById(nameKey, list) {
+                for (var i = 0; i < list.length; i++) {
+                    if (list[i].id === nameKey) {
+                        return list[i].xml;
+                    }
+                }
+            }
+        } //end setActiveRow
+
+        //var routeLayersStack = [];
+        function drawRoute(wktStr) {
+            var symbol = new sGis.symbol.polyline.Simple({
+                strokeWidth: 2,
+                strokeColor: 'blue'
+            });
+            var currentLayer = sGis.addWktRoutesToMap(wktStr, sp.map, symbol);
+            //show only last layer in stack
+            if (routeLayersStack.length > 0) {
+                var lastLayer = routeLayersStack.pop(); //or routeLayersStack = [];
+                // lastLayer.display=false;
+                lastLayer.isDisplayed = false
+                routeLayersStack.push(currentLayer);
+                console.log('featureLayer2Before', sp.map.getLayerIndex(featureLayer2));
+                sp.map.moveLayerToTop(featureLayer2); //or featureLayer
+                console.log('featureLayer2After', sp.map.getLayerIndex(featureLayer2));
+            } else {
+                routeLayersStack.push(currentLayer);
+            }
+        } //end drawRoute
+
+        function getContextFor(selectedTab) {
+
+            var selectedTabIndex = selectedTab.index();
+            if (selectedTabIndex === 1) {
+                var documentContentTableSelector = '#Grid_e6160c2c-ae31-4616-b429-9b6c9f404a7f > div.t-grid-content > table';
+                var documentHeadTableSelector = documentContentTableSelector.substr(0, documentContentTableSelector.indexOf('>')).trim();;
+                return {
+                    contentTable: document.querySelector(documentContentTableSelector),
+                    headerTable: document.querySelector(documentHeadTableSelector + '_table'),
+                    id: 'document',
+                    tabIdx: selectedTabIndex
+                };
+            } else if (selectedTabIndex === 2) {
+                var gibddContentTableSelector = '#Grid_f9089285-ffdc-4efd-a7d8-b7abdb6353c8 > div.t-grid-content > table';
+                var gibddHeadTableSelector = gibddContentTableSelector.substr(0, gibddContentTableSelector.indexOf('>')).trim();
+                return {
+                    contentTable: document.querySelector(gibddHeadTableSelector),
+                    headerTable: document.querySelector(gibddHeadTableSelector + '_table'),
+                    id: 'gibdd',
+                    tabIdx: selectedTabIndex
+                };
+            } else if (selectedTabIndex === 3) {
+                var madiContentTableSelector = '#Grid_1c5dec0c-5b68-4d17-93e5-3fd89e4a6b4d > div.t-grid-content > table';
+                var madiHeadTableSelector = madiContentTableSelector.substr(0, madiContentTableSelector.indexOf('>')).trim();
+                return {
+                    contentTable: document.querySelector(madiContentTableSelector),
+                    headerTable: document.querySelector(madiHeadTableSelector + '_table'),
+                    id: 'madi',
+                    tabIdx: selectedTabIndex
+                };
+            } else if (selectedTabIndex === 4) {
+                var propuskContentTableSelector = '#Grid_a2126135-1379-4306-9443-f5274265fa2d > div.t-grid-content > table';
+                var propuskHeadTableSelector = propuskContentTableSelector.substr(0, propuskContentTableSelector.indexOf('>')).trim();
+                return {
+                    contentTable: document.querySelector(propuskContentTableSelector),
+                    headerTable: document.querySelector(propuskHeadTableSelector + '_table'),
+                    id: 'propusk',
+                    tabIdx: selectedTabIndex
+                };
+            } else if (selectedTabIndex === 6) {
+                var vsaprosachContentTableSelector = '#Grid_a7416e50-48db-4b64-9bec-f57f0588ddc1 > div.t-grid-content > table';
+                var vsaprosachHeadTableSelector = vsaprosachContentTableSelector.substr(0, vsaprosachContentTableSelector.indexOf('>')).trim();
+                return {
+                    contentTable: document.querySelector(vsaprosachContentTableSelector),
+                    headerTable: document.querySelector(vsaprosachHeadTableSelector + '_table'),
+                    id: 'vsaprosach',
+                    tabIdx: selectedTabIndex
+                };
+            }
+            return null;
+        } //end getContextFor()
+
+        function colResizableDisabler(context) {
+            var $headTable = $(context.headerTable);
+            $headTable.colResizable({
+                disable: true
+            });
+        } //end createSplitter
+
+
+    } catch (e) {
+        e == "1"
+    } //end catch
+</script>

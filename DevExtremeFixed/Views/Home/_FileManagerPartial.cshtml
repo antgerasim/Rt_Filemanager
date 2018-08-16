@@ -1,0 +1,36 @@
+@model string
+
+@Html.DevExpress().FileManager(settings => {
+    settings.Name = "FileManager";
+    settings.CallbackRouteValues = new { Controller = "Home", Action = "FileManagerPartial" };
+
+    settings.DownloadRouteValues = new { Controller = "Home", Action = "FileManagerPartialDownload" };
+    settings.SettingsEditing.AllowDownload = true;
+
+    settings.ClientSideEvents.SelectedFileOpened = "function(s, e) { e.file.Download(); e.processOnServer = false; }";
+
+    settings.Settings.ThumbnailFolder = Url.Content("~/Content/FileManager/Thumbnails");
+
+    settings.SettingsEditing.AllowCreate = true;
+    settings.SettingsEditing.AllowRename = true;
+    settings.SettingsEditing.AllowMove = true;
+    settings.SettingsEditing.AllowDelete = true;
+    settings.SettingsUpload.Enabled = true;
+    settings.SettingsUpload.UseAdvancedUploadMode = true;
+    settings.SettingsUpload.AdvancedModeSettings.EnableMultiSelect = true;
+    settings.SettingsFolders.EnableCallBacks = false;
+
+    //settings.SettingsFileList.View = DevExpress.Web.FileListView.Thumbnails;
+    //Don Added
+
+   // var fileManagerType = Request.Params["fmtype"].ToString();
+    var fmtype = Session["lastfmtype"] as string; //todo repalce with viewdata
+    if (fmtype == "small")
+    {
+        settings.SettingsFileList.View = DevExpress.Web.FileListView.Details; // table view of files
+        settings.SettingsFolders.Visible = false; // folder treeview disable
+        settings.SettingsToolbar.Visible = false; // upper toolbar disable
+        settings.Height = 300;
+    }
+
+}).BindToFolder(Model).GetHtml()
