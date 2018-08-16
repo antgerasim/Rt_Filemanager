@@ -23,8 +23,9 @@
     //settings.SettingsFileList.View = DevExpress.Web.FileListView.Thumbnails;
     //Don Added
 
-   // var fileManagerType = Request.Params["fmtype"].ToString();
-    var fmtype = Session["lastfmtype"] as string; //todo repalce with viewdata
+   //Must be session in order to enable ajax
+    var fmtype = Session["lastfmtype"] as string; 
+    //var sfmType = Session["lastsfmtype"] as string;
     if (fmtype == "small")
     {
         settings.SettingsFileList.View = DevExpress.Web.FileListView.Details; // table view of files

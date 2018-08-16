@@ -11,12 +11,14 @@ namespace DevExtremeFixed.Controllers
 {
     public class HomeController : Controller
     {
-        public ActionResult Index(string id, string typename, string fmtype)
+        public ActionResult Index(string id, string typename, string fmtype, string sfmtype)
         {
             //http://localhost:2998/?id=6659B6E9-891C-E811-80CA-D3E9C8E3E880&typename=new_t_project
-            //http://localhost:2998/?fmtype=small&id=6659B6E9-891C-E811-80CA-D3E9C8E3E880&typename=new_t_project
+            //http://localhost:2998/?fmtype=small&id=6659B6E9-891C-E811-80CA-D3E9C8E3E880&typename=new_t_project //sfmType1
+            //http://localhost:2998/?fmtype=small&sfmtype=sfmType1&id=6659B6E9-891C-E811-80CA-D3E9C8E3E880&typename=new_t_project
             var lastFmType = fmtype ?? "big";
-            Session["lastfmtype"] = lastFmType;
+            Session["lastfmtype"] = lastFmType; // lastFileManagerType
+            Session["lastsfmtype"] = sfmtype ?? string.Empty; // lastSmallFileManagerType
             try
             {
                 TestFilePermissions();
@@ -34,14 +36,15 @@ namespace DevExtremeFixed.Controllers
         {
             var typeNameKey = typename; //dont touch typename in args as it is URL param in dynamics project
                                         //if directory not exist, create new    
-            var fmtype = Session["lastfmtype"] as string;        
+            var fmtype = Session["lastfmtype"] as string;
+            var sfmType = Session["lastsfmtype"] as string;
 
             var isAjaxRequestTest = Request.IsAjaxRequest();
 
             if (Request.IsAjaxRequest() || Request.RawUrl.Contains("_Upload")) //Home/FileManagerPartial?DXProgressHandlerKey=e7c314181cd51b09fe25a8a4be03700b&DXHelperUploadingCallback=FileManager_Splitter_Upload
             {
                 string rootFolder = null;
-                var homeControllerFileManagerSettings = new HomeControllerFileManagerSettings(rootFolder, fmtype);
+                var homeControllerFileManagerSettings = new HomeControllerFileManagerSettings(rootFolder);
                 return PartialView("_FileManagerPartial", HomeControllerFileManagerSettings.Model);
             }
 
@@ -54,6 +57,19 @@ namespace DevExtremeFixed.Controllers
                 if (fmtype == "small")
                 {
                     folderPath = String.Format(@"C:\Documents\SmallProjects\{0}\{1}\Home", typeNameKey, id);
+
+                    if (!string.IsNullOrEmpty(sfmType))
+                    {
+                        //var sfmType = String.Empty;
+                        /* * 1. Архитектура решения = sfmType1
+                         * * 2. Схема реализации = sfmType2
+                         * * 3. КП подрядчиков = sfmType3
+                         * * 4. Паспорт сделки = sfmType4
+                         * */
+                        //folderPath = String.Format(@"C:\Documents\SmallProjects\{0}\{1}\{2}\Home", sfmType, typeNameKey, id);
+                        folderPath = String.Format(@"C:\Documents\SmallProjects\{0}\{1}\{2}", typeNameKey, id, sfmType);
+
+                    }
                 }
                 else if (fmtype == "big")
                 {
@@ -66,7 +82,7 @@ namespace DevExtremeFixed.Controllers
                 {
                     Directory.CreateDirectory(folderPath);
                 }
-                new HomeControllerFileManagerSettings(folderPath, fmtype);
+                new HomeControllerFileManagerSettings(folderPath);
                 //throw new Exception(folderPath.ToString());
                 return PartialView("_FileManagerPartial", HomeControllerFileManagerSettings.Model);
             }
@@ -119,13 +135,13 @@ namespace DevExtremeFixed.Controllers
         public static string RootFolder = "";
 
 
-        public HomeControllerFileManagerSettings(string rootFolder, string fileManagerType)
+        public HomeControllerFileManagerSettings(string rootFolder)
         {
             if (rootFolder != null)
             {
                 RootFolder = rootFolder;
             }
-           // else //ajax rootfolder is null
+            // else //ajax rootfolder is null
         }
 
         public static string Model
