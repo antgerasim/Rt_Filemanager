@@ -300,7 +300,7 @@
           <SaveServerSettingsInUserFile>False</SaveServerSettingsInUserFile>
         </WebProjectProperties>
       </FlavorProperties>
-      <UserProperties DismissedDevExtremeVersion="17.2.7.0" />
+      <UserProperties DismissedDevExtremeVersion="17.2.9.0" />
     </VisualStudio>
   </ProjectExtensions>
 </Project>
